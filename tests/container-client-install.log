@@ -1,0 +1,14 @@
+下载 wstunnel v11.1.0（wstunnel_11.1.0_linux_amd64.tar.gz）...
+wstunnel 已安装到 /usr/local/bin/wstunnel
+Created symlink '/etc/systemd/system/multi-user.target.wants/wstunnel-client.service' → '/etc/systemd/system/wstunnel-client.service'.
+
+安装完成。wstunnel 客户端已在后台运行（开机自启）。
+下一步：把 AWG 配置的 Endpoint 改成 127.0.0.1:61387，再连接。
+查看状态：systemctl status wstunnel-client
+查看日志：journalctl -u wstunnel-client -f
+wstunnel 11.1.0 已安装，跳过下载
+
+安装完成。wstunnel 客户端已在后台运行（开机自启）。
+下一步：把 AWG 配置的 Endpoint 改成 127.0.0.1:61387，再连接。
+查看状态：systemctl status wstunnel-client
+查看日志：journalctl -u wstunnel-client -f

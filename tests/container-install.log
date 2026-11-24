@@ -1,0 +1,90 @@
+==============================================
+  wstunnel 服务端一键安装器（v11.1.0）
+==============================================
+[*] 系统：debian trixie，架构：amd64
+[*] 安装基础依赖（curl / ca-certificates / openssl / iproute2 / tar）...
+W: Download is performed unsandboxed as root as file '/var/lib/apt/lists/partial/deb.debian.org_debian_dists_trixie_InRelease' couldn't be accessed by user '_apt'. - pkgAcquire::Run (13: Permission denied)
+[+] 基础依赖就绪
+[*] 安装参数：域名 test.example.com，WS 端口 8443/tcp，AWG 端口 61386/udp
+[!] 域名 test.example.com 解析到 127.0.0.1，本机公网 IP 是 2a04:4e41:4c:dd1::4259:8dd1，两者不一致
+[!] 非交互模式：继续安装（请确认 DNS 解析正确，否则客户端连不上）
+[*] 测试模式：跳过 acme.sh 证书签发
+[+] 测试证书已就位（跳过签发）
+[*] 下载 wstunnel v11.1.0（wstunnel_11.1.0_linux_amd64.tar.gz）...
+[+] sha256 校验通过
+[+] wstunnel v11.1.0 已安装到 /root/wstunnel/wstunnel
+[+] 已生成新的路径鉴权密钥
+[+] systemd 服务已写入
+[!] ufw 未启用（inactive），未添加规则；如以后启用 ufw，请放行 8443/tcp
+[+] wstunnel 服务运行中，监听 8443/tcp
+[+] 客户端一键包已生成：/root/wstool
+
+==============================================
+  安装完成
+==============================================
+  服务端：wss://test.example.com:8443/<密钥>
+  WS 端口：8443/tcp（TLS WebSocket）
+  AWG 端口：61386/udp（被套用的 UDP 端口）
+  证书：/root/cert/test.example.com/（acme.sh 自动续签，续完自动重启服务）
+  密钥文件：/root/wstunnel-awg.secret（不要泄露，客户端包里已带上）
+  服务状态：active（开机自启）
+  服务日志：/root/wstunnel/server.log
+
+  客户端一键包：/root/wstool
+    linux/  Linux 客户端：sudo bash install-client.sh
+    win11/  Win11 客户端：管理员 PowerShell 运行 setup.ps1
+
+  下载客户端包到本地：
+    scp -r root@test.example.com:/root/wstool/ ./
+  （SSH 不是 22 端口时加 -P <端口>；或用你习惯的方式把 /root/wstool 拷下来）
+
+  客户端装完后，记得把 AWG 配置的 Endpoint 改成：
+    Linux：127.0.0.1:61387
+    Win11：<本机局域网 IP>:61387（setup.ps1 会打印检测到的 IP）
+==============================================
+==============================================
+  wstunnel 服务端一键安装器（v11.1.0）
+==============================================
+[*] 系统：debian trixie，架构：amd64
+[!] 检测到已有 wstunnel 安装，将备份旧配置后重新安装
+[+] 旧配置已备份到 /root/wstunnel-backup-20261124-081008
+[*] 安装基础依赖（curl / ca-certificates / openssl / iproute2 / tar）...
+W: Download is performed unsandboxed as root as file '/var/lib/apt/lists/partial/deb.debian.org_debian_dists_trixie_InRelease' couldn't be accessed by user '_apt'. - pkgAcquire::Run (13: Permission denied)
+[+] 基础依赖就绪
+[*] 安装参数：域名 test.example.com，WS 端口 8443/tcp，AWG 端口 61386/udp
+[!] 域名 test.example.com 解析到 127.0.0.1，本机公网 IP 是 2a04:4e41:2c:b41::b822:b41，两者不一致
+[!] 非交互模式：继续安装（请确认 DNS 解析正确，否则客户端连不上）
+[*] 测试模式：跳过 acme.sh 证书签发
+[+] 测试证书已就位（跳过签发）
+[*] 下载 wstunnel v11.1.0（wstunnel_11.1.0_linux_amd64.tar.gz）...
+[+] sha256 校验通过
+[+] wstunnel v11.1.0 已安装到 /root/wstunnel/wstunnel
+[+] 复用已有密钥（/root/wstunnel-awg.secret，现有客户端不受影响；要轮换请先删掉该文件再重装）
+[+] systemd 服务已写入
+[!] ufw 未启用（inactive），未添加规则；如以后启用 ufw，请放行 8443/tcp
+[+] wstunnel 服务运行中，监听 8443/tcp
+[+] 客户端一键包已生成：/root/wstool
+
+==============================================
+  安装完成
+==============================================
+  服务端：wss://test.example.com:8443/<密钥>
+  WS 端口：8443/tcp（TLS WebSocket）
+  AWG 端口：61386/udp（被套用的 UDP 端口）
+  证书：/root/cert/test.example.com/（acme.sh 自动续签，续完自动重启服务）
+  密钥文件：/root/wstunnel-awg.secret（不要泄露，客户端包里已带上）
+  服务状态：active（开机自启）
+  服务日志：/root/wstunnel/server.log
+
+  客户端一键包：/root/wstool
+    linux/  Linux 客户端：sudo bash install-client.sh
+    win11/  Win11 客户端：管理员 PowerShell 运行 setup.ps1
+
+  下载客户端包到本地：
+    scp -r root@test.example.com:/root/wstool/ ./
+  （SSH 不是 22 端口时加 -P <端口>；或用你习惯的方式把 /root/wstool 拷下来）
+
+  客户端装完后，记得把 AWG 配置的 Endpoint 改成：
+    Linux：127.0.0.1:61387
+    Win11：<本机局域网 IP>:61387（setup.ps1 会打印检测到的 IP）
+==============================================
