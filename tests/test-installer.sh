@@ -95,6 +95,7 @@ checks = [
     ('含 Get-NetRoute 检测', 'Get-NetRoute' in s),
     ('含 Register-ScheduledTask', 'Register-ScheduledTask' in s),
     ('含 Start-ScheduledTask', 'Start-ScheduledTask' in s),
+    ('含自动重连循环', ':loop' in s and 'goto loop' in s),
 ]
 bad = [name for name, ok in checks if not ok]
 if bad:
