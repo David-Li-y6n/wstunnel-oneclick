@@ -49,12 +49,17 @@ Win11/Linux 客户端                    VPS 服务端
 ### 环境要求
 
 - 一台全新的 Debian 12/13 或 Ubuntu 22.04/24.04 服务器，root 权限运行安装器。
-- 一个域名，已托管在 Cloudflare（DNS 由 Cloudflare 解析），并已解析到这台服务器的公网 IP。
-  证书用 DNS-01 方式签发，签发过程不用开放 80/443 端口，但客户端要靠域名连进来，
-  所以解析必须正确。
-- 一个 Cloudflare API Token，权限需要 **Zone:DNS:Edit**（只改 DNS 就够，不用 Global API Key）。
-  在 Cloudflare 控制台 → My Profile → API Tokens → Create Token → Edit zone DNS 模板，
-  Zone Resources 选你的域名所在 zone。
+- 一个域名，已解析到这台服务器的公网 IP（客户端要靠域名连进来，所以解析必须正确）。
+- 证书二选一：
+  - **已有证书**：把证书放到 `/root/cert/<域名>/fullchain.pem` 与 `privkey.pem`，
+    安装器输入域名后会自动检查并复用（校验四项：能解析、覆盖该域名、未过期、
+    私钥与证书匹配），不用 Cloudflare API Token。注意：复用的证书不会由本安装器
+    自动续签，请自行在到期前更新（有效期会打印在安装日志与摘要里）。
+  - **没有证书**：需要域名托管在 Cloudflare（DNS 由 Cloudflare 解析），并准备一个
+    Cloudflare API Token，权限需要 **Zone:DNS:Edit**（只改 DNS 就够，不用 Global API Key）。
+    在 Cloudflare 控制台 → My Profile → API Tokens → Create Token → Edit zone DNS 模板，
+    Zone Resources 选你的域名所在 zone。安装器用 acme.sh + DNS-01 签发证书，
+    签发过程不用开放 80/443 端口。
 - 服务器上已经装好 AWG 服务端并正常运行（本包只装 wstunnel，不装 AWG；
   AWG 请用 [awg-manager](https://github.com/David-Li-y6n/awg-manager) 安装）。
   安装器会问你要套用哪个 AWG UDP 端口（比如 61386）。
@@ -76,22 +81,29 @@ bash install-wstunnel.sh
 安装器会一步步问你：
 
 1. **域名**：客户端连接用的域名，如 `hkg3.nexv.me`。安装器会检查它是否解析到本机 IP，
-   解析不对会提醒你确认（DNS 可能有延迟，不强制失败）。
+   解析不对会提醒你确认（DNS 可能有延迟，不强制失败）。输入域名后，安装器先检查
+   `/root/cert/<域名>/` 里有没有现成证书：有且校验通过就直接复用，跳到第 3 步；
+   没有或校验不通过（过期、不覆盖该域名、私钥不匹配等）才继续问第 2 步。
 2. **Cloudflare API Token**：输入时不回显。只在签发证书时用，不会写进任何客户端文件。
+   已有证书可用时不问这一步。
 3. **WebSocket 端口**：默认 443，直接回车用默认；也可以自定义（如 8443）。
    安装器会检查端口是否被占用。非 443 端口时，客户端地址会自动带上端口号。
 4. **AWG UDP 端口**：要套用的 AWG 监听端口，如 `61386`。安装器会提醒你当前有没有进程
    在监听这个 UDP 端口（没有也不强制失败，AWG 可能还没启动）。
 
-然后安装器自动完成：签证书 → 下载并校验 wstunnel → 生成密钥 → 写 systemd 服务 →
-放行防火墙 → 启动服务 → 生成客户端一键包。
+然后安装器自动完成：签证书（或复用已有证书）→ 下载并校验 wstunnel → 生成密钥 →
+写 systemd 服务 → 放行防火墙 → 启动服务 → 生成客户端一键包。
 
 ### 非交互模式
 
-四个环境变量全设就跳过全部提示（供脚本与测试使用）：
+域名、WS 端口、AWG 端口三个环境变量全设就跳过全部提示（供脚本与测试使用）；
+Cloudflare API Token 只有在没有可用证书时才需要：
 
 ```bash
+# 没有现成证书时（需要签发）：
 DOMAIN=hkg3.nexv.me CF_TOKEN=xxx WS_PORT=443 AWG_PORT=61386 bash install-wstunnel.sh
+# 已有证书放在 /root/cert/hkg3.nexv.me/ 时（复用，不用 Token）：
+DOMAIN=hkg3.nexv.me WS_PORT=443 AWG_PORT=61386 bash install-wstunnel.sh
 ```
 
 缺一个变量时，只对缺的那项做交互提示。
@@ -134,13 +146,17 @@ systemctl restart wstunnel         # 重启服务
 
 ### 证书续签
 
-acme.sh 安装时已装好自动续签（cron 任务），证书到期前会自动续签，
-续完执行 `--reloadcmd "systemctl restart wstunnel"` 重启服务加载新证书。
-手动检查续签状态：
+- **acme.sh 签发的证书**：安装时已装好自动续签（cron 任务），证书到期前会自动续签，
+  续完执行 `--reloadcmd "systemctl restart wstunnel"` 重启服务加载新证书。
+  手动检查续签状态：
 
 ```bash
 /root/.acme.sh/acme.sh --list
 ```
+
+- **复用的已有证书**：本安装器不会接管续签。如果该证书之前就是由这台机器上的
+  acme.sh 签发的，续签配置仍在，会继续自动续签；否则请在到期前自行更新证书
+  （替换 `/root/cert/<域名>/` 下的两个文件后重启服务：`systemctl restart wstunnel`）。
 
 ### 轮换路径鉴权密钥
 

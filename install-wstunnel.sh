@@ -2,11 +2,18 @@
 # install-wstunnel.sh — wstunnel 服务端一键安装器（独立包，与 AWG 安装器分开）
 # 在一台全新的 Debian/Ubuntu 服务器上装好 wstunnel 服务端（UDP over WebSocket），
 # 把 AmneziaWG 的 UDP 流量包进 TLS WebSocket（默认 443 端口）。
-# 证书用 acme.sh + Cloudflare DNS-01 签发，不用开放 80/443 端口。
 #
-# 交互模式：直接运行，按提示输入域名、CF API Token、WS 端口、AWG 端口。
-# 非交互模式：设置环境变量后运行（四个全设才跳过全部提示）：
-#   DOMAIN=hkg3.nexv.me CF_TOKEN=xxx WS_PORT=443 AWG_PORT=61386
+# 证书两种来源（输入域名后先检查，顺序固定）：
+#   1. 已有证书：/root/cert/<域名>/fullchain.pem + privkey.pem 已存在且校验通过
+#      （能解析、覆盖该域名、未过期、私钥匹配），直接复用，不问 Cloudflare
+#      API Token、不走 acme.sh 签发。注意：本安装器不会接管已有证书的续签，
+#      请自行在到期前更新证书（有效期会打印在安装日志与摘要里）。
+#   2. 没有可用证书：问 Cloudflare API Token，用 acme.sh + DNS-01 签发新证书，
+#      不用开放 80/443 端口；签发后自动续签、续完重启 wstunnel。
+#
+# 交互模式：直接运行，按提示输入域名（已有证书时不再问 Token）、WS 端口、AWG 端口。
+# 非交互模式：设置环境变量后运行（Token 只有在没有可用证书时才需要）：
+#   DOMAIN=hkg3.nexv.me WS_PORT=443 AWG_PORT=61386 [CF_TOKEN=xxx]
 #
 # 测试专用（不要在生产用）：WSTUNNEL_TEST_SKIP_ACME=1 时跳过证书签发，
 # 要求证书已预先放在 /root/cert/<域名>/fullchain.pem 与 privkey.pem。
@@ -37,6 +44,11 @@ WSTUNNEL_DIR="/root/wstunnel"
 SECRET_FILE="/root/wstunnel-awg.secret"
 WSTOOL_DIR="/root/wstool"
 LOCAL_FWD_PORT=61387
+# 已有证书复用状态（由 check_existing_cert 设置）：
+#   USE_EXISTING_CERT=1 表示 /root/cert/<域名>/ 下的证书校验通过，将直接复用；
+#   CERT_EXPIRY 为该证书的到期时间（仅复用时有值）。
+USE_EXISTING_CERT=0
+CERT_EXPIRY=""
 
 log() { echo "[*] $*"; }
 ok() { echo "[+] $*"; }
@@ -110,6 +122,16 @@ pick_domain() {
 }
 
 pick_cf_token() {
+    # 已有可用证书时不问 Token（证书复用不需要签发）
+    if (( USE_EXISTING_CERT == 1 )); then
+        log "使用已有证书，跳过 Cloudflare API Token"
+        return 0
+    fi
+    # 测试模式不签发证书，也不需要 Token
+    if [[ "${WSTUNNEL_TEST_SKIP_ACME:-0}" == "1" ]]; then
+        log "测试模式：跳过 Cloudflare API Token"
+        return 0
+    fi
     if [[ -n "${CF_TOKEN:-}" ]]; then return 0; fi
     while true; do
         read -r -s -p "Cloudflare API Token（需要 Zone:DNS:Edit 权限，输入时不回显）： " CF_TOKEN
@@ -117,6 +139,82 @@ pick_cf_token() {
         [[ -n "$CF_TOKEN" ]] && break
         warn "Token 不能为空，请重新输入"
     done
+}
+
+# ---------- 已有证书检查 ----------
+# 输入域名后先看 /root/cert/<域名>/ 里有没有现成证书（fullchain.pem + privkey.pem），
+# 有且通过四项校验就直接复用，不再问 Token、不走 acme.sh 签发。
+# 四项校验：1) 能解析为证书；2) 覆盖该域名（SAN 优先、CN 兜底，支持通配符）；
+# 3) 未过期；4) 私钥与证书匹配（RSA / EC 通用，比对公钥）。
+# 通过则 USE_EXISTING_CERT=1；缺文件或任一项不通过则 USE_EXISTING_CERT=0，
+# 走原来的 Token + acme.sh 签发流程（签发会覆盖同目录下的旧证书）。
+# 测试时可用 WSTUNNEL_CERT_DIR 覆盖证书根目录（默认 /root/cert）。
+check_existing_cert() {
+    USE_EXISTING_CERT=0
+    CERT_EXPIRY=""
+    local cert_base="${WSTUNNEL_CERT_DIR:-/root/cert}"
+    local cert_dir="$cert_base/$DOMAIN"
+    local fullchain="$cert_dir/fullchain.pem"
+    local privkey="$cert_dir/privkey.pem"
+
+    if [[ ! -d "$cert_base" ]]; then
+        log "未发现证书目录 $cert_base，将用 acme.sh 签发新证书"
+        return 0
+    fi
+    if [[ ! -d "$cert_dir" ]]; then
+        log "证书目录里没有与域名 $DOMAIN 同名的子目录，将用 acme.sh 签发新证书"
+        return 0
+    fi
+    if [[ ! -f "$fullchain" || ! -f "$privkey" ]]; then
+        warn "证书目录 $cert_dir 缺少 fullchain.pem 或 privkey.pem，将用 acme.sh 签发新证书"
+        return 0
+    fi
+
+    # 1. 能解析为证书
+    openssl x509 -noout -in "$fullchain" >/dev/null 2>&1 \
+        || { warn "已有证书无法解析（$fullchain 不是有效证书），将用 acme.sh 重新签发"; return 0; }
+
+    # 2. 覆盖该域名（SAN 优先，CN 兜底；支持通配符 *.example.com）
+    local sans cn covered san
+    sans=$(openssl x509 -noout -ext subjectAltName -in "$fullchain" 2>/dev/null \
+        | grep -o 'DNS:[^,]*' | sed 's/^DNS://')
+    if [[ -z "$sans" ]]; then
+        sans=$(openssl x509 -noout -text -in "$fullchain" 2>/dev/null \
+            | grep -o 'DNS:[^,]*' | sed 's/^DNS://')
+    fi
+    cn=$(openssl x509 -noout -subject -in "$fullchain" 2>/dev/null \
+        | sed -n 's/.*CN *= *\([^,/]*\).*/\1/p')
+    covered=0
+    for san in $sans $cn; do
+        if [[ "$san" == "$DOMAIN" ]]; then covered=1; break; fi
+        # 通配符 *.example.com 只覆盖下一级子域名
+        if [[ "$san" == \*.* ]] && [[ "${DOMAIN#*.}" == "${san#*.}" ]]; then covered=1; break; fi
+    done
+    if (( covered == 0 )); then
+        warn "已有证书不覆盖域名 $DOMAIN（SAN：${sans:-无}，CN：${cn:-无}），将用 acme.sh 重新签发"
+        return 0
+    fi
+
+    # 3. 未过期
+    openssl x509 -noout -checkend 0 -in "$fullchain" >/dev/null 2>&1 \
+        || { warn "已有证书已过期，将用 acme.sh 重新签发"; return 0; }
+
+    # 4. 私钥与证书匹配（RSA / EC 通用：比对公钥）
+    local cert_pub key_pub
+    cert_pub=$(openssl x509 -noout -pubkey -in "$fullchain" 2>/dev/null)
+    key_pub=$(openssl pkey -in "$privkey" -pubout 2>/dev/null)
+    if [[ -z "$cert_pub" || -z "$key_pub" || "$cert_pub" != "$key_pub" ]]; then
+        warn "已有证书与私钥不匹配，将用 acme.sh 重新签发"
+        return 0
+    fi
+
+    CERT_EXPIRY=$(openssl x509 -noout -enddate -in "$fullchain" 2>/dev/null | sed 's/^notAfter=//')
+    USE_EXISTING_CERT=1
+    ok "发现已有证书：$cert_dir（有效期至 $CERT_EXPIRY），将直接复用，不再签发新证书"
+    # 7 天内到期提醒一句（不拦安装，证书还能用）
+    openssl x509 -noout -checkend 604800 -in "$fullchain" >/dev/null 2>&1 \
+        || warn "注意：该证书 7 天内到期，请及时更新"
+    return 0
 }
 
 pick_ws_port() {
@@ -187,6 +285,11 @@ check_dns() {
 # ---------- 证书（acme.sh + Cloudflare DNS-01） ----------
 issue_cert() {
     local cert_dir="/root/cert/$DOMAIN"
+    # 已有可用证书：直接复用，跳过签发
+    if (( USE_EXISTING_CERT == 1 )); then
+        log "使用已有证书（$cert_dir），跳过证书签发"
+        return 0
+    fi
     mkdir -p "$cert_dir"
     if [[ "${WSTUNNEL_TEST_SKIP_ACME:-0}" == "1" ]]; then
         log "测试模式：跳过 acme.sh 证书签发"
@@ -661,12 +764,6 @@ main() {
     echo "=============================================="
     echo "  wstunnel 服务端一键安装器（v$WSTUNNEL_VERSION）"
     echo "=============================================="
-    # 四个环境变量全设才算非交互模式（缺一个就对缺的项做交互提示）
-    if [[ -n "${DOMAIN:-}" && -n "${CF_TOKEN:-}" && -n "${WS_PORT:-}" && -n "${AWG_PORT:-}" ]]; then
-        NONINTERACTIVE=1
-    else
-        NONINTERACTIVE=0
-    fi
     local os_info os_id os_code
     os_info=$(detect_os) || exit 1
     os_id=${os_info%% *}; os_code=${os_info##* }
@@ -696,7 +793,17 @@ main() {
     install_base_deps
 
     pick_domain
+    # 输入域名后先检查有没有现成证书可用（通过则复用，不再问 Token）
+    check_existing_cert
     pick_cf_token
+    # 非交互模式：域名、WS 端口、AWG 端口都已给定，且不需要再问 Token
+    #（Token 已给定，或已有可用证书可复用）；否则对缺的项做交互提示
+    if [[ -n "${DOMAIN:-}" && -n "${WS_PORT:-}" && -n "${AWG_PORT:-}" ]] \
+        && { [[ -n "${CF_TOKEN:-}" ]] || (( USE_EXISTING_CERT == 1 )); }; then
+        NONINTERACTIVE=1
+    else
+        NONINTERACTIVE=0
+    fi
     pick_ws_port
     pick_awg_port
     log "安装参数：域名 $DOMAIN，WS 端口 $WS_PORT/tcp，AWG 端口 $AWG_PORT/udp"
@@ -717,7 +824,11 @@ main() {
     echo "  服务端：wss://$DOMAIN$([ "$WS_PORT" == "443" ] || echo ":$WS_PORT")/<密钥>"
     echo "  WS 端口：$WS_PORT/tcp（TLS WebSocket）"
     echo "  AWG 端口：$AWG_PORT/udp（被套用的 UDP 端口）"
-    echo "  证书：/root/cert/$DOMAIN/（acme.sh 自动续签，续完自动重启服务）"
+    if (( USE_EXISTING_CERT == 1 )); then
+        echo "  证书：/root/cert/$DOMAIN/（复用已有证书，有效期至 $CERT_EXPIRY；本安装器不接管续签，请自行在到期前更新）"
+    else
+        echo "  证书：/root/cert/$DOMAIN/（acme.sh 自动续签，续完自动重启服务）"
+    fi
     echo "  密钥文件：$SECRET_FILE（不要泄露，客户端包里已带上）"
     echo "  服务状态：$(systemctl is-active wstunnel)（开机自启）"
     echo "  服务日志：$WSTUNNEL_DIR/server.log"

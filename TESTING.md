@@ -1,8 +1,8 @@
 # 测试记录
 
-## 静态测试（2026-11-24，沙箱，全部通过）
+## 静态测试（2026-11-25，沙箱，全部通过）
 
-运行 `bash tests/test-installer.sh`，12 项全部通过：
+运行 `bash tests/test-installer.sh`，23 项全部通过：
 
 - `install-wstunnel.sh` 通过 `bash -n` 语法检查。
 - 生成的 Linux 客户端脚本 `install-client.sh` 通过 `bash -n`（443 与 8443 两组参数）。
@@ -13,6 +13,13 @@
   ExecStart 确认为 CLI 双旗标 + `bash -c` 包装格式。
 - `setup.ps1` 大括号/圆括号/引号平衡，here-string 成对，
   含 `Get-NetRoute` 检测、`Register-ScheduledTask`、`Start-ScheduledTask`。
+- 已有证书复用（2026-11-25 新增）：`check_existing_cert` 函数存在，
+  证书校验含过期检查与私钥匹配，有证书时跳过 Token 提示，
+  `issue_cert` 复用时跳过签发。
+- `check_existing_cert` 功能测试（真实 openssl 证书）：
+  有效证书复用、错域名拒绝、过期证书拒绝、私钥不匹配拒绝、
+  通配符证书覆盖子域名、缺证书目录拒绝，6 项全部通过。
+  （过期证书用 Python cryptography 生成，openssl req 的 `-days` 不能为 0。）
 
 ## 容器测试（2026-11-24，Debian 13 容器，全部通过）
 
